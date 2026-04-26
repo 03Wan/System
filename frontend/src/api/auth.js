@@ -24,11 +24,12 @@ async function loginBySupabase(payload) {
     .is("deleted_at", null)
     .maybeSingle();
   if (error) throw toApiError(error.message, 500);
-  if (!data || Number(data.status) !== 1) throw toApiError("用户名或密码错误", 401);
+  if (!data) throw toApiError("账号不存在", 404);
+  if (Number(data.status) !== 1) throw toApiError("账号已被禁用，请联系管理员", 403);
 
   // NOTE: This demo mode follows existing project seed style (plain text).
   // Production should switch to RPC + pgcrypto or Supabase Auth.
-  if (String(data.password_hash || "") !== password) throw toApiError("用户名或密码错误", 401);
+  if (String(data.password_hash || "") !== password) throw toApiError("密码错误", 401);
 
   const loginAt = new Date().toISOString();
   const [userUpdateResult, logInsertResult] = await Promise.all([

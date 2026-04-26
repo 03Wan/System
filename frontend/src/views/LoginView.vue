@@ -116,6 +116,15 @@ onMounted(() => {
   initTheme();
 });
 
+function parseErrorMessage(error, fallback = "操作失败，请稍后重试") {
+  return (
+    error?.response?.data?.message ||
+    error?.response?.data?.error ||
+    error?.message ||
+    fallback
+  );
+}
+
 async function onSubmit() {
   if (!form.username || !form.password) {
     ElMessage.warning("请输入用户名和密码");
@@ -127,6 +136,8 @@ async function onSubmit() {
     auth.setAuth(res.data.access_token, res.data.user);
     ElMessage.success("登录成功");
     router.push(res.data.user.role === "ADMIN" ? "/admin/home" : "/user/home");
+  } catch (error) {
+    ElMessage.error(parseErrorMessage(error, "登录失败，请检查账号密码"));
   } finally {
     loading.value = false;
   }
@@ -166,6 +177,8 @@ async function onRegister() {
     form.password = "";
     registerVisible.value = false;
     Object.assign(registerForm, { username: "", password: "", real_name: "", email: "", phone: "" });
+  } catch (error) {
+    ElMessage.error(parseErrorMessage(error, "注册失败，请稍后重试"));
   } finally {
     registerLoading.value = false;
   }
@@ -188,6 +201,8 @@ async function onForgotPassword() {
     form.password = "";
     forgotVisible.value = false;
     Object.assign(forgotForm, { username: "", email: "", phone: "", new_password: "" });
+  } catch (error) {
+    ElMessage.error(parseErrorMessage(error, "重置失败，请稍后重试"));
   } finally {
     forgotLoading.value = false;
   }
