@@ -886,12 +886,9 @@ export default async function handler(req, res) {
   try {
     ensureSupabaseEnv();
 
-    const segments = Array.isArray(req.query.route)
-      ? req.query.route
-      : req.query.route
-      ? [req.query.route]
-      : [];
-    const path = `/${segments.join("/")}`;
+    const rawUrl = String(req.url || "");
+    const pathname = rawUrl.split("?")[0] || "/";
+    const path = pathname.startsWith("/api/") ? pathname.slice(4) : pathname === "/api" ? "/" : pathname;
     const method = String(req.method || "GET").toUpperCase();
     const auth = getAuth(req);
 
