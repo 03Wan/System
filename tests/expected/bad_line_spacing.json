@@ -1,0 +1,7 @@
+{
+  "sample": "bad_line_spacing.docx",
+  "expected_problem_types": [
+    "line_spacing"
+  ],
+  "min_expected_hits": 1
+}

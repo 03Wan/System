@@ -1,0 +1,10 @@
+{
+  "sample": "bad_mixed.docx",
+  "expected_problem_types": [
+    "heading_format",
+    "body_font",
+    "first_line_indent",
+    "reference_number_not_continuous"
+  ],
+  "min_expected_hits": 4
+}

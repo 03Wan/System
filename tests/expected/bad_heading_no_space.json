@@ -1,0 +1,7 @@
+{
+  "sample": "bad_heading_no_space.docx",
+  "expected_problem_types": [
+    "heading_format"
+  ],
+  "min_expected_hits": 1
+}

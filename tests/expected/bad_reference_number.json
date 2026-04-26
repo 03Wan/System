@@ -1,0 +1,7 @@
+{
+  "sample": "bad_reference_number.docx",
+  "expected_problem_types": [
+    "reference_number_not_continuous"
+  ],
+  "min_expected_hits": 1
+}

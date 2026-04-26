@@ -1,0 +1,7 @@
+{
+  "sample": "bad_body_font.docx",
+  "expected_problem_types": [
+    "body_font"
+  ],
+  "min_expected_hits": 1
+}

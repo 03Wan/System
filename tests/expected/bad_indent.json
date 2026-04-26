@@ -1,0 +1,7 @@
+{
+  "sample": "bad_indent.docx",
+  "expected_problem_types": [
+    "first_line_indent"
+  ],
+  "min_expected_hits": 1
+}
