@@ -96,8 +96,23 @@
 
         <el-card class="card panel-pad">
           <div class="section-title">操作提示</div>
-          <el-alert type="info" :closable="false" title="检测失败时会显示具体错误（例如函数未部署或权限不足）。" />
-          <el-alert style="margin-top: 10px" type="success" :closable="false" title="一键排版不会覆盖原文，会生成新文件。" />
+          <el-alert
+            type="info"
+            :closable="false"
+            title="建议先上传文档并选择模板，再开始检测；如检测未通过，可根据结果页建议逐项修改。"
+          />
+          <el-alert
+            style="margin-top: 10px"
+            type="success"
+            :closable="false"
+            title="一键排版会生成新的排版文件，不会覆盖原始文档。"
+          />
+          <el-alert
+            style="margin-top: 10px"
+            type="warning"
+            :closable="false"
+            title="建议先完成基础排版（如标题层级、段落分段、参考文献编号）后再检测或一键排版。"
+          />
         </el-card>
       </div>
     </div>
@@ -217,7 +232,7 @@ async function startFormat() {
   try {
     const res = await autoFormatApi(paperId.value, {});
     formattedFileId.value = res.data.output_file_id || null;
-    formattedDownloadUrl.value = `${import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:5001"}${res.data.download_url}`;
+    formattedDownloadUrl.value = res.data.download_url || (formattedFileId.value ? `/api/files/${formattedFileId.value}/download` : "");
     ElMessage.success("一键排版完成");
   } catch (error) {
     ElMessage.error(parseErrorMessage(error, "一键排版失败，请稍后重试"));

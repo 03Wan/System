@@ -291,20 +291,34 @@ const problemDescMap = {
   "body line spacing mismatch": "正文行距与标准不一致",
   "body first line indent mismatch": "正文首行缩进与标准不一致",
   "body paragraph spacing mismatch": "正文段前段后间距与标准不一致",
+  "heading style mismatch": "标题样式与模板不一致",
   "heading number not continuous": "标题编号不连续",
   "heading hierarchy jump detected": "标题层级跳跃",
   "page number field not detected": "未检测到页码域",
+  "table of contents field not detected": "未检测到目录自动生成域",
   "paper size mismatch": "纸张大小不符合标准",
+  "page margin mismatch": "页边距不符合标准",
   "header missing": "页眉缺失",
   "footer missing": "页脚缺失",
+  "too many sections detected": "分节数量过多",
+  "figure numbering is not continuous": "图片编号不连续",
+  "table numbering is not continuous": "表格编号不连续",
+  "figure caption position mismatch": "图题位置不符合要求",
+  "table caption position mismatch": "表题位置不符合要求",
+  "image alignment mismatch": "图片对齐方式不符合要求",
   "reference index not continuous": "参考文献编号不连续",
   "reference numbers are out of order": "参考文献编号乱序",
   "duplicate reference number detected": "参考文献编号重复",
   "reference entry content is empty": "参考文献条目为空",
   "entry numbering format not recognized": "参考文献编号格式无法识别",
   "reference numbering is not continuous": "参考文献编号不连续",
+  "reference numbering format mismatch": "参考文献编号格式与模板不一致",
   "references region exists but contains no entries": "参考文献区域存在但没有条目",
   "reference region not detected": "未检测到参考文献区域",
+  "reference entries uncertain": "参考文献条目识别不稳定，建议人工复核",
+  "reference completeness check failed": "参考文献信息不完整",
+  "reference type mark missing": "参考文献类型标识缺失",
+  "reference punctuation issue": "参考文献标点格式异常",
   "low confidence heading candidate": "标题识别置信度较低，建议人工确认"
 };
 
@@ -552,9 +566,48 @@ function displayProblemType(problemType) {
 }
 
 function displayProblemDesc(problemDesc) {
-  const key = String(problemDesc || "");
+  const key = String(problemDesc || "").trim();
+  if (!key) return "-";
   if (problemDescMap[key]) return problemDescMap[key];
-  return zhFallback(key, "该问题描述为英文，请按模板要求人工复核") || "-";
+
+  const styleMismatch = key.match(/^(.+?) style mismatch:\s*(.+)$/i);
+  if (styleMismatch) {
+    const target = styleMismatch[1]
+      .replace(/abstract zh title/i, "中文摘要标题")
+      .replace(/abstract en title/i, "英文摘要标题")
+      .replace(/conclusion title/i, "结论标题")
+      .replace(/thanks title/i, "致谢标题")
+      .replace(/reference title/i, "参考文献标题")
+      .replace(/appendix title/i, "附录标题")
+      .replace(/heading/i, "标题");
+    const attrs = styleMismatch[2]
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .map((x) =>
+        x
+          .replace(/^font$/i, "字体")
+          .replace(/^font_size$/i, "字号")
+          .replace(/^bold$/i, "加粗")
+          .replace(/^align$/i, "对齐方式")
+      )
+      .join("、");
+    return `${target}格式不符合模板要求：${attrs || "样式不一致"}`;
+  }
+
+  const missingTitle = key.match(/^(.+?) missing$/i);
+  if (missingTitle) {
+    const target = missingTitle[1]
+      .replace(/abstract zh title/i, "中文摘要标题")
+      .replace(/abstract en title/i, "英文摘要标题")
+      .replace(/conclusion title/i, "结论标题")
+      .replace(/thanks title/i, "致谢标题")
+      .replace(/reference title/i, "参考文献标题")
+      .replace(/appendix title/i, "附录标题");
+    return `缺少${target}`;
+  }
+
+  return zhFallback(key, `检测到问题：${key}`) || "-";
 }
 
 function displaySuggestion(suggestion) {
@@ -698,7 +751,7 @@ function saveBlobResponseAsFile(resp, blob, fallbackName) {
   } else if (plainNameMatch?.[1]) {
     fileName = plainNameMatch[1].trim() || fallbackName;
   }
-  if (!/\.xlsx$/i.test(fileName)) fileName = `${fileName}.xlsx`;
+  if (!/\.[A-Za-z0-9]{2,5}$/i.test(fileName)) fileName = `${fileName}.xlsx`;
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -711,7 +764,6 @@ function saveBlobResponseAsFile(resp, blob, fallbackName) {
 
 async function downloadExcelReport() {
   const taskIdForDownload = result.value?.task_id || taskId.value;
-  const fileId = pickReportFileId("excel");
   downloadingExcel.value = true;
 
   try {
@@ -728,20 +780,7 @@ async function downloadExcelReport() {
       return;
     }
 
-    if (!fileId) {
-      ElMessage.warning("当前任务没有可下载的 Excel 报告");
-      return;
-    }
-
-    const resp = await downloadFileBlobApi(fileId);
-    const blob = resp.data;
-    if (!blob || blob.size === 0) {
-      ElMessage.error("下载失败：空文件");
-      return;
-    }
-
-    saveBlobResponseAsFile(resp, blob, `report_task_${taskIdForDownload}.xlsx`);
-    ElMessage.success("Excel 报告下载成功");
+    ElMessage.warning("缺少任务ID，无法下载报告");
   } catch (error) {
     const status = Number(error?.response?.status || 0);
 

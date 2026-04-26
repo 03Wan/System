@@ -1,5 +1,6 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import JSZip from "npm:jszip@3.10.1";
+﻿import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import JSZip from "https://esm.sh/jszip@3.10.1";
+import { DOMParser } from "https://esm.sh/@xmldom/xmldom@0.8.10";
 
 type Severity = "ERROR" | "WARNING" | "INFO";
 type IssueStatus = "confirmed" | "suspected" | "manual_review";
@@ -87,7 +88,22 @@ function json(status: number, body: Record<string, unknown>) {
 }
 
 function localNameOf(el: Element): string {
-  return (el.localName || el.tagName || "").toLowerCase();
+  const raw = (el.localName || el.tagName || (el as unknown as { nodeName?: string }).nodeName || "").toLowerCase();
+  if (raw.includes(":")) return raw.split(":").pop() || raw;
+  return raw;
+}
+
+function elementChildren(node: Element): Element[] {
+  const rawChildren = (node as unknown as { children?: unknown[] }).children;
+  if (Array.isArray(rawChildren)) return rawChildren as Element[];
+  const childNodes = (node as unknown as { childNodes?: ArrayLike<unknown> }).childNodes;
+  if (!childNodes) return [];
+  const out: Element[] = [];
+  for (let i = 0; i < childNodes.length; i += 1) {
+    const n = childNodes[i] as { nodeType?: number };
+    if (n && n.nodeType === 1) out.push(childNodes[i] as Element);
+  }
+  return out;
 }
 
 function attr(node: Element | null, key: string): string {
@@ -101,7 +117,7 @@ function attr(node: Element | null, key: string): string {
 }
 
 function firstChildByLocalName(node: Element, name: string): Element | null {
-  for (const child of Array.from(node.children)) {
+  for (const child of elementChildren(node)) {
     if (localNameOf(child) === name) return child;
   }
   return null;
@@ -109,7 +125,7 @@ function firstChildByLocalName(node: Element, name: string): Element | null {
 
 function childrenByLocalName(node: Element, name: string): Element[] {
   const out: Element[] = [];
-  for (const child of Array.from(node.children)) {
+  for (const child of elementChildren(node)) {
     if (localNameOf(child) === name) out.push(child);
   }
   return out;
@@ -120,10 +136,14 @@ function descendantsByLocalName(node: Element, name: string): Element[] {
 }
 
 function hasAncestorWithLocalName(node: Element, name: string): boolean {
-  let cur: Element | null = node.parentElement;
+  let cur: Element | null = ((node as unknown as { parentElement?: Element; parentNode?: Element }).parentElement ||
+    (node as unknown as { parentNode?: Element }).parentNode ||
+    null) as Element | null;
   while (cur) {
     if (localNameOf(cur) === name) return true;
-    cur = cur.parentElement;
+    cur = ((cur as unknown as { parentElement?: Element; parentNode?: Element }).parentElement ||
+      (cur as unknown as { parentNode?: Element }).parentNode ||
+      null) as Element | null;
   }
   return false;
 }
@@ -350,16 +370,27 @@ function parseDocx(documentXml: string, stylesXml: string | null): DocInfo {
 }
 
 function detectHeadingLevel(paragraph: ParagraphInfo): number | null {
+  if (paragraph.hasTocField) return null;
   const style = toAsciiLower(paragraph.styleId);
-  if (style.includes("heading1") || style === "1" || style.endsWith("1")) return 1;
-  if (style.includes("heading2") || style === "2" || style.endsWith("2")) return 2;
-  if (style.includes("heading3") || style === "3" || style.endsWith("3")) return 3;
+  if (/heading[\s_-]*1|标题[\s_-]*1|biaoti[\s_-]*1/.test(style)) return 1;
+  if (/heading[\s_-]*2|标题[\s_-]*2|biaoti[\s_-]*2/.test(style)) return 2;
+  if (/heading[\s_-]*3|标题[\s_-]*3|biaoti[\s_-]*3/.test(style)) return 3;
 
   const text = normalizeText(paragraph.text);
-  if (/^第[一二三四五六七八九十百千\d]+章/.test(text)) return 1;
+  if (text.length > 42) return null;
+  if (!text || /[\u2026\.]{3,}\s*\d+\s*$/.test(text)) return null;
+  if (/^第[一二三四五六七八九十百千万\d]+章(\s|$)/.test(text)) return 1;
+
+  // 仅在具有较强标题特征时，才将编号段落视作标题，避免把正文编号行误判为标题。
+  const run = firstMeaningfulRun(paragraph);
+  const hasStrongCue =
+    run?.bold === true ||
+    toAsciiLower(paragraph.align || "") === "center" ||
+    (!/[，,。；;：:！？!?]$/.test(text) && text.length <= 28);
+  if (!hasStrongCue) return null;
+
   if (/^\d+\.\d+\.\d+(\s|$)/.test(text)) return 3;
   if (/^\d+\.\d+(\s|$)/.test(text)) return 2;
-  if (/^\d+(\s|$)/.test(text)) return 1;
   return null;
 }
 
@@ -707,7 +738,9 @@ function addTocRules(docInfo: DocInfo, rules: RuleRow[], issues: Issue[]) {
 function headingCandidates(docInfo: DocInfo): Array<{ p: ParagraphInfo; level: number }> {
   return docInfo.paragraphs
     .map((p) => ({ p, level: detectHeadingLevel(p) }))
-    .filter((x): x is { p: ParagraphInfo; level: number } => x.level !== null);
+    .filter(
+      (x): x is { p: ParagraphInfo; level: number } => x.level !== null && !x.p.hasTocField && !x.p.inTable,
+    );
 }
 
 function parseHeadingNumberTuple(text: string): number[] {
@@ -730,54 +763,30 @@ function addHeadingRules(docInfo: DocInfo, rules: RuleRow[], issues: Issue[]) {
     const expectedAlign = String(cfg.align || "").trim();
     const severity = ruleSeverity(rules, ruleCode, "ERROR");
 
-    const levelHeadings = headings.filter((h) => h.level === level).slice(0, 80);
+    const levelHeadings = headings.filter((h) => h.level === level).slice(0, 120);
     for (const item of levelHeadings) {
       const p = item.p;
       const run = firstMeaningfulRun(p);
       if (!run) continue;
 
       const position = `paragraph ${p.index} (${toPreview(p.text)})`;
-      if (expectedFont && run.font && run.font !== expectedFont) {
-        issues.push(
-          makeIssue({
-            problemType: "heading_format",
-            problemDesc: "heading font mismatch",
-            position,
-            suggestion: "normalize heading style",
-            severity,
-          }),
-        );
-      }
+      const mismatchReasons: string[] = [];
+      if (expectedFont && run.font && run.font !== expectedFont) mismatchReasons.push("font");
       if (expectedSize > 0 && run.sizeHalfPt !== null && Math.abs(run.sizeHalfPt - ptToHalfPt(expectedSize)) > 0.8) {
-        issues.push(
-          makeIssue({
-            problemType: "heading_format",
-            problemDesc: "heading font size mismatch",
-            position,
-            suggestion: "normalize heading style",
-            severity,
-          }),
-        );
+        mismatchReasons.push("font_size");
       }
-      if (run.bold !== null && run.bold !== expectedBold) {
+      if (run.bold !== null && run.bold !== expectedBold) mismatchReasons.push("bold");
+      if (expectedAlign && !alignMatches(expectedAlign, p.align)) mismatchReasons.push("align");
+
+      if (mismatchReasons.length) {
         issues.push(
           makeIssue({
             problemType: "heading_format",
-            problemDesc: "heading bold mismatch",
+            problemDesc: `heading style mismatch: ${mismatchReasons.join(",")}`,
             position,
             suggestion: "normalize heading style",
             severity,
-          }),
-        );
-      }
-      if (expectedAlign && !alignMatches(expectedAlign, p.align)) {
-        issues.push(
-          makeIssue({
-            problemType: "heading_format",
-            problemDesc: "heading alignment mismatch",
-            position,
-            suggestion: "normalize heading style",
-            severity,
+            reasons: ["matched_style_name", ...mismatchReasons],
           }),
         );
       }
@@ -856,63 +865,63 @@ function addHeadingRules(docInfo: DocInfo, rules: RuleRow[], issues: Issue[]) {
       );
       continue;
     }
+
     const run = firstMeaningfulRun(target);
     if (!run) continue;
+
     const position = `paragraph ${target.index} (${toPreview(target.text)})`;
-    if (expectedFont && run.font && run.font !== expectedFont) {
-      issues.push(
-        makeIssue({
-          problemType: "heading_format",
-          problemDesc: `${item.label} font mismatch`,
-          position,
-          suggestion: "normalize heading style",
-          severity: sev,
-        }),
-      );
-    }
+    const mismatchReasons: string[] = [];
+    if (expectedFont && run.font && run.font !== expectedFont) mismatchReasons.push("font");
     if (expectedSize > 0 && run.sizeHalfPt !== null && Math.abs(run.sizeHalfPt - ptToHalfPt(expectedSize)) > 0.8) {
-      issues.push(
-        makeIssue({
-          problemType: "heading_format",
-          problemDesc: `${item.label} font size mismatch`,
-          position,
-          suggestion: "normalize heading style",
-          severity: sev,
-        }),
-      );
+      mismatchReasons.push("font_size");
     }
-    if (run.bold !== null && run.bold !== expectedBold) {
+    if (run.bold !== null && run.bold !== expectedBold) mismatchReasons.push("bold");
+    if (expectedAlign && !alignMatches(expectedAlign, target.align)) mismatchReasons.push("align");
+
+    if (mismatchReasons.length) {
       issues.push(
         makeIssue({
           problemType: "heading_format",
-          problemDesc: `${item.label} bold mismatch`,
+          problemDesc: `${item.label} style mismatch: ${mismatchReasons.join(",")}`,
           position,
           suggestion: "normalize heading style",
           severity: sev,
-        }),
-      );
-    }
-    if (expectedAlign && !alignMatches(expectedAlign, target.align)) {
-      issues.push(
-        makeIssue({
-          problemType: "heading_format",
-          problemDesc: `${item.label} alignment mismatch`,
-          position,
-          suggestion: "normalize heading style",
-          severity: sev,
+          reasons: ["matched_style_name", ...mismatchReasons],
         }),
       );
     }
   }
 }
-
 function extractReferenceEntries(docInfo: DocInfo): { startIdx: number; entries: ParagraphInfo[] } | null {
   const title = docInfo.paragraphs.find((p) => isTitleKeyword(p.text, headingKeywordMap.reference));
   if (!title) return null;
   const start = title.index;
-  const entries = docInfo.paragraphs.filter((p) => p.index > start && !isTitleKeyword(p.text, headingKeywordMap.appendix));
-  const trimmed = entries.filter((p) => normalizeText(p.text)).slice(0, 250);
-  return { startIdx: start, entries: trimmed };
+  const rawTail = docInfo.paragraphs
+    .filter((p) => p.index > start && !isTitleKeyword(p.text, headingKeywordMap.appendix))
+    .slice(0, 350);
+
+  const entries: ParagraphInfo[] = [];
+  let started = false;
+  let nonEntryStreak = 0;
+  for (const p of rawTail) {
+    const text = normalizeText(p.text);
+    if (!text) continue;
+
+    if (detectHeadingLikeLine(text) && started) break;
+    const likely = isLikelyReferenceEntryText(text);
+    if (likely) {
+      entries.push(p);
+      started = true;
+      nonEntryStreak = 0;
+      continue;
+    }
+
+    if (!started) continue;
+    nonEntryStreak += 1;
+    if (nonEntryStreak >= 6) break;
+  }
+
+  return { startIdx: start, entries: entries.slice(0, 180) };
 }
 
 function parseRefNumber(text: string): { n: number | null; format: string | null } {
@@ -922,6 +931,24 @@ function parseRefNumber(text: string): { n: number | null; format: string | null
   m = t.match(/^(\d+)[\.\)]\s*/);
   if (m) return { n: Number(m[1]), format: "n." };
   return { n: null, format: null };
+}
+
+function isLikelyReferenceEntryText(text: string): boolean {
+  const t = normalizeText(text);
+  if (!t) return false;
+  if (t.length < 6 || t.length > 420) return false;
+  if (/^\[(\d+)\]/.test(t) || /^(\d+)[\.\)]\s*/.test(t)) return true;
+  if (/(19|20)\d{2}/.test(t) && /[,\.;:，。；：]/.test(t)) return true;
+  if (/\[[JMBCRDSP]\]/i.test(t)) return true;
+  return false;
+}
+
+function detectHeadingLikeLine(text: string): boolean {
+  const t = normalizeText(text);
+  if (!t || t.length > 60) return false;
+  if (/^第[一二三四五六七八九十百千万\d]+章(\s|$)/.test(t)) return true;
+  if (/^\d+\.\d+(\.\d+)?(\s|$)/.test(t)) return true;
+  return false;
 }
 
 function addReferenceRules(docInfo: DocInfo, rules: RuleRow[], issues: Issue[]) {
@@ -962,114 +989,136 @@ function addReferenceRules(docInfo: DocInfo, rules: RuleRow[], issues: Issue[]) 
   if (hasRefSeq) {
     const seqSeverity = ruleSeverity(rules, "REFERENCE_SEQ", "ERROR");
     const seqCfg = ruleConfig(rules, "REFERENCE_SEQ");
-    const expectedFmt = String(seqCfg.format || "[n]").trim();
-    const numbers: number[] = [];
-    const formats: string[] = [];
-    let unknownCount = 0;
+    const expectedFmt = String(seqCfg.format || "").trim();
+    const expectsNumbering = ["[n]", "n.", "numeric"].includes(toAsciiLower(expectedFmt));
+    const parsedEntries = entries.map((entry) => ({ entry, parsed: parseRefNumber(entry.text) }));
+    const numberedCount = parsedEntries.filter((x) => x.parsed.n !== null).length;
+    const numberedRatio = entries.length ? numberedCount / entries.length : 0;
+    const shouldTreatAsNumbered = expectsNumbering || numberedRatio >= 0.5;
 
-    for (const entry of entries) {
-      const parsed = parseRefNumber(entry.text);
-      if (parsed.n === null) {
-        unknownCount += 1;
-        issues.push(
-          makeIssue({
-            problemType: "reference_entry_unrecognized",
-            problemDesc: "entry numbering format not recognized",
-            position: `paragraph ${entry.index} (${toPreview(entry.text)})`,
-            suggestion: "verify if this paragraph is a reference entry",
-            severity: seqSeverity,
-            confidence: 0.72,
-            issueStatus: "suspected",
-            autoFix: false,
-          }),
-        );
-      } else {
-        numbers.push(parsed.n);
-        if (parsed.format) formats.push(parsed.format);
-      }
-    }
-
-    if (formats.length > 1) {
-      const uniq = [...new Set(formats)];
-      if (uniq.length > 1) {
-        issues.push(
-          makeIssue({
-            problemType: "reference_numbering_mixed_format",
-            problemDesc: "reference numbering is not continuous",
-            position: "references region",
-            suggestion: "use one consistent numbering format",
-            severity: seqSeverity,
-          }),
-        );
-      } else if (expectedFmt && uniq[0] !== expectedFmt) {
-        issues.push(
-          makeIssue({
-            problemType: "reference_numbering",
-            problemDesc: "reference numbering format mismatch",
-            position: "references region",
-            suggestion: "use one consistent numbering format",
-            severity: seqSeverity,
-          }),
-        );
-      }
-    }
-
-    const seen = new Set<number>();
-    for (let i = 0; i < numbers.length; i += 1) {
-      const n = numbers[i];
-      if (seen.has(n)) {
-        issues.push(
-          makeIssue({
-            problemType: "reference_number_duplicate",
-            problemDesc: "duplicate reference number detected",
-            position: "references region",
-            suggestion: "sort or renumber reference entries",
-            severity: seqSeverity,
-          }),
-        );
-      }
-      seen.add(n);
-      if (i > 0 && n < numbers[i - 1]) {
-        issues.push(
-          makeIssue({
-            problemType: "reference_number_out_of_order",
-            problemDesc: "reference numbers are out of order",
-            position: "references region",
-            suggestion: "sort or renumber reference entries",
-            severity: seqSeverity,
-          }),
-        );
-      }
-    }
-    if (numbers.length > 1) {
-      const min = Math.min(...numbers);
-      const max = Math.max(...numbers);
-      if (max - min + 1 !== numbers.length) {
-        issues.push(
-          makeIssue({
-            problemType: "reference_number_not_continuous",
-            problemDesc: "reference index not continuous",
-            position: "references region",
-            suggestion: "renumber references continuously",
-            severity: seqSeverity,
-          }),
-        );
-      }
-    }
-    if (unknownCount >= Math.ceil(entries.length * 0.4)) {
+    if (!shouldTreatAsNumbered) {
       issues.push(
         makeIssue({
           problemType: "reference_region_uncertain",
           problemDesc: "reference entries uncertain",
           position: "references region",
           suggestion: "manual review suggested",
-          severity: seqSeverity,
-          confidence: 0.65,
+          severity: "WARNING",
+          confidence: 0.78,
           issueStatus: "manual_review",
           autoFix: false,
           reasons: ["suspected_by_heuristics"],
         }),
       );
+    } else {
+      const numbers: number[] = [];
+      const formats: string[] = [];
+      let unknownCount = 0;
+
+      for (const item of parsedEntries) {
+        const { entry, parsed } = item;
+        if (parsed.n === null) {
+          unknownCount += 1;
+          issues.push(
+            makeIssue({
+              problemType: "reference_entry_unrecognized",
+              problemDesc: "entry numbering format not recognized",
+              position: `paragraph ${entry.index} (${toPreview(entry.text)})`,
+              suggestion: "verify if this paragraph is a reference entry",
+              severity: seqSeverity,
+              confidence: 0.72,
+              issueStatus: "suspected",
+              autoFix: false,
+            }),
+          );
+        } else {
+          numbers.push(parsed.n);
+          if (parsed.format) formats.push(parsed.format);
+        }
+      }
+
+      if (formats.length >= 1) {
+        const uniq = [...new Set(formats)];
+        if (uniq.length > 1) {
+          issues.push(
+            makeIssue({
+              problemType: "reference_numbering_mixed_format",
+              problemDesc: "reference numbering is not continuous",
+              position: "references region",
+              suggestion: "use one consistent numbering format",
+              severity: seqSeverity,
+            }),
+          );
+        } else if (expectedFmt && uniq[0] !== expectedFmt) {
+          issues.push(
+            makeIssue({
+              problemType: "reference_numbering",
+              problemDesc: "reference numbering format mismatch",
+              position: "references region",
+              suggestion: "use one consistent numbering format",
+              severity: seqSeverity,
+            }),
+          );
+        }
+      }
+
+      const seen = new Set<number>();
+      for (let i = 0; i < numbers.length; i += 1) {
+        const n = numbers[i];
+        if (seen.has(n)) {
+          issues.push(
+            makeIssue({
+              problemType: "reference_number_duplicate",
+              problemDesc: "duplicate reference number detected",
+              position: "references region",
+              suggestion: "sort or renumber reference entries",
+              severity: seqSeverity,
+            }),
+          );
+        }
+        seen.add(n);
+        if (i > 0 && n < numbers[i - 1]) {
+          issues.push(
+            makeIssue({
+              problemType: "reference_number_out_of_order",
+              problemDesc: "reference numbers are out of order",
+              position: "references region",
+              suggestion: "sort or renumber reference entries",
+              severity: seqSeverity,
+            }),
+          );
+        }
+      }
+      if (numbers.length > 1) {
+        const min = Math.min(...numbers);
+        const max = Math.max(...numbers);
+        if (max - min + 1 !== numbers.length) {
+          issues.push(
+            makeIssue({
+              problemType: "reference_number_not_continuous",
+              problemDesc: "reference index not continuous",
+              position: "references region",
+              suggestion: "renumber references continuously",
+              severity: seqSeverity,
+            }),
+          );
+        }
+      }
+      if (unknownCount >= Math.ceil(entries.length * 0.4)) {
+        issues.push(
+          makeIssue({
+            problemType: "reference_region_uncertain",
+            problemDesc: "reference entries uncertain",
+            position: "references region",
+            suggestion: "manual review suggested",
+            severity: seqSeverity,
+            confidence: 0.65,
+            issueStatus: "manual_review",
+            autoFix: false,
+            reasons: ["suspected_by_heuristics"],
+          }),
+        );
+      }
     }
   }
 
@@ -1085,7 +1134,7 @@ function addReferenceRules(docInfo: DocInfo, rules: RuleRow[], issues: Issue[]) 
       const pos = `paragraph ${entry.index} (${toPreview(entry.text)})`;
       if (checkCompleteness) {
         const hasYear = /(19|20)\d{2}/.test(t);
-        const hasDelimiter = /[，,。.;；:]/.test(t);
+        const hasDelimiter = /[锛?銆?;锛?]/.test(t);
         if (!hasYear || !hasDelimiter || t.length < 8) {
           issues.push(
             makeIssue({
@@ -1109,7 +1158,7 @@ function addReferenceRules(docInfo: DocInfo, rules: RuleRow[], issues: Issue[]) 
           }),
         );
       }
-      if (checkPunctuation && /,,|。。|;;/.test(t)) {
+      if (checkPunctuation && /,,|銆傘€倈;;/.test(t)) {
         issues.push(
           makeIssue({
             problemType: "reference_punctuation",
@@ -1131,8 +1180,8 @@ function addFigureTableRules(docInfo: DocInfo, rules: RuleRow[], issues: Issue[]
   const figurePrefix = String(cfg.figure_prefix || "FIG").trim();
   const tablePrefix = String(cfg.table_prefix || "TAB").trim();
 
-  const figRegex = new RegExp(`^(图|${figurePrefix}|Figure)\\s*([\\d\\.]+)`, "i");
-  const tabRegex = new RegExp(`^(表|${tablePrefix}|Table)\\s*([\\d\\.]+)`, "i");
+  const figRegex = new RegExp(`^(鍥緗${figurePrefix}|Figure)\\s*([\\d\\.]+)`, "i");
+  const tabRegex = new RegExp(`^(琛▅${tablePrefix}|Table)\\s*([\\d\\.]+)`, "i");
 
   const figureCaptions = docInfo.paragraphs.filter((p) => figRegex.test(normalizeText(p.text)));
   const tableCaptions = docInfo.paragraphs.filter((p) => tabRegex.test(normalizeText(p.text)));
@@ -1256,32 +1305,32 @@ function addCoverRules(docInfo: DocInfo, rules: RuleRow[], issues: Issue[]) {
   const checks: Array<{ enabled: boolean; pattern: RegExp; desc: string }> = [
     {
       enabled: parseYesNoLike(cfg.require_student_name, true),
-      pattern: /(姓名|name)/i,
+      pattern: /(濮撳悕|name)/i,
       desc: "student name field missing on cover",
     },
     {
       enabled: parseYesNoLike(cfg.require_student_no, true),
-      pattern: /(学号|student\s*id|student\s*no)/i,
+      pattern: /(瀛﹀彿|student\s*id|student\s*no)/i,
       desc: "student number field missing on cover",
     },
     {
       enabled: parseYesNoLike(cfg.require_supervisor_1, true),
-      pattern: /(指导教师|导师|supervisor)/i,
+      pattern: /(鎸囧鏁欏笀|瀵煎笀|supervisor)/i,
       desc: "supervisor field missing on cover",
     },
     {
       enabled: parseYesNoLike(cfg.require_major, false),
-      pattern: /(专业|major)/i,
+      pattern: /(涓撲笟|major)/i,
       desc: "major field missing on cover",
     },
     {
       enabled: parseYesNoLike(cfg.require_college, false),
-      pattern: /(学院|college|school)/i,
+      pattern: /(瀛﹂櫌|college|school)/i,
       desc: "college field missing on cover",
     },
     {
       enabled: parseYesNoLike(cfg.require_class_name, false),
-      pattern: /(班级|class)/i,
+      pattern: /(鐝骇|class)/i,
       desc: "class field missing on cover",
     },
   ];
@@ -1385,6 +1434,25 @@ function enabledRuleCodes(rules: RuleRow[]): string[] {
   return rules.map((r) => String(r.rule_code || "").toUpperCase()).sort();
 }
 
+function formatUnknownError(error: unknown): string {
+  if (error instanceof Error) return error.message || "unknown error";
+  if (typeof error === "string") return error || "unknown error";
+  if (typeof error === "number" || typeof error === "boolean") return String(error);
+  if (error && typeof error === "object") {
+    const e = error as Record<string, unknown>;
+    const candidates = [e.message, e.error, e.code, e.details, e.hint]
+      .map((x) => String(x || "").trim())
+      .filter(Boolean);
+    if (candidates.length) return candidates.join(" | ");
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return "unknown object error";
+    }
+  }
+  return "unknown error";
+}
+
 function runAllChecks(docInfo: DocInfo, rules: RuleRow[]): Issue[] {
   const issues: Issue[] = [];
   addBodyRules(docInfo, rules, issues);
@@ -1456,16 +1524,33 @@ Deno.serve(async (req) => {
     const enabledRules = (rules || []) as RuleRow[];
     const issues = runAllChecks(docInfo, enabledRules);
     const metrics = computeScore(issues);
+    const dbMetrics = {
+      total_score: metrics.total_score,
+      pass_flag: metrics.pass_flag,
+      error_count: metrics.error_count,
+      warning_count: metrics.warning_count,
+      info_count: metrics.info_count,
+      hit_rule_count: metrics.hit_rule_count,
+    };
 
     const { error: resultError } = await supabase.from("detection_result").upsert(
       {
         task_id: task.id,
-        ...metrics,
+        ...dbMetrics,
         summary_json: {
           generated_by: "supabase_edge_function",
           analyzed_paragraph_count: docInfo.paragraphs.length,
           analyzed_section_count: docInfo.sections.length,
           enabled_rule_codes: enabledRuleCodes(enabledRules),
+          score_breakdown: {
+            confirmed_error_count: metrics.confirmed_error_count,
+            confirmed_warning_count: metrics.confirmed_warning_count,
+            confirmed_info_count: metrics.confirmed_info_count,
+            suspected_error_count: metrics.suspected_error_count,
+            suspected_warning_count: metrics.suspected_warning_count,
+            suspected_info_count: metrics.suspected_info_count,
+            manual_review_count: metrics.manual_review_count,
+          },
         },
         detail_json: { issues },
         completed_at: new Date().toISOString(),
@@ -1485,11 +1570,11 @@ Deno.serve(async (req) => {
       message: "ok",
       data: {
         task_id: task.id,
-        ...metrics,
+        ...dbMetrics,
       },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "detect failed";
+    const message = formatUnknownError(error) || "detect failed";
     if (taskId) {
       await supabase
         .from("detection_task")
@@ -1499,3 +1584,4 @@ Deno.serve(async (req) => {
     return json(500, { code: 500, message });
   }
 });
+
