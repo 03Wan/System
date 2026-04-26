@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+﻿import { createClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 
 export const config = {
@@ -19,7 +19,7 @@ const supabase = createClient(supabaseUrl, supabaseServiceRoleKey, {
 
 class ApiError extends Error {
   constructor(message, status = 400) {
-    super(message || "请求失败");
+    super(message || "璇锋眰澶辫触");
     this.status = status;
   }
 }
@@ -30,8 +30,26 @@ function ok(res, data = {}) {
 
 function fail(res, error) {
   const status = Number(error?.status || 500);
-  const message = error?.message || "服务异常，请稍后重试";
+  const message = error?.message || "鏈嶅姟寮傚父锛岃绋嶅悗閲嶈瘯";
   res.status(status).json({ code: status, message });
+}
+
+async function writeSystemLog(payload = {}) {
+  try {
+    await supabase.from("system_log").insert({
+      user_id: payload.user_id ?? null,
+      log_type: payload.log_type || "SYSTEM",
+      module: payload.module || "system",
+      action: payload.action || "unknown",
+      target_type: payload.target_type || null,
+      target_id: payload.target_id || null,
+      level: payload.level || "INFO",
+      message: payload.message || "",
+      detail_json: payload.detail_json || {}
+    });
+  } catch {
+    // ignore log write errors
+  }
 }
 
 function getAuth(req) {
@@ -44,22 +62,34 @@ function getAuth(req) {
     const m = token.match(/^sb-local-(\d+)-/);
     if (m) userId = Number(m[1]);
   }
-  return { token, userId: Number.isFinite(userId) ? userId : null, role };
+  return { token, userId: Number.isFinite(userId) ? userId : null, role, user: null };
+}
+
+async function hydrateAuth(auth) {
+  if (!auth?.userId) return auth;
+  const { data, error } = await supabase
+    .from("sys_user")
+    .select("id, username, role, real_name, email, phone, status, deleted_at")
+    .eq("id", auth.userId)
+    .maybeSingle();
+  if (error) throw new ApiError(error.message, 500);
+  if (!data || data.deleted_at || Number(data.status) !== 1) return { ...auth, user: null };
+  return { ...auth, role: String(data.role || "USER").toUpperCase(), user: data };
 }
 
 function requireLogin(auth) {
-  if (!auth?.userId) throw new ApiError("请先登录", 401);
-  return auth.userId;
+  if (!auth?.user?.id) throw new ApiError("璇峰厛鐧诲綍", 401);
+  return auth.user.id;
 }
 
 function requireAdmin(auth) {
   requireLogin(auth);
-  if (auth.role !== "ADMIN") throw new ApiError("无权限执行该操作", 403);
+  if (String(auth.user?.role || "").toUpperCase() !== "ADMIN") throw new ApiError("鏃犳潈闄愭墽琛岃鎿嶄綔", 403);
 }
 
 function ensureSupabaseEnv() {
   if (!supabaseUrl || !supabaseServiceRoleKey) {
-    throw new ApiError("服务端 Supabase 环境变量缺失，请配置 SUPABASE_URL 与 SUPABASE_SERVICE_ROLE_KEY", 500);
+    throw new ApiError("鏈嶅姟绔?Supabase 鐜鍙橀噺缂哄け锛岃閰嶇疆 SUPABASE_URL 涓?SUPABASE_SERVICE_ROLE_KEY", 500);
   }
 }
 
@@ -69,7 +99,7 @@ function parseJsonBody(req) {
     try {
       return JSON.parse(req.body);
     } catch {
-      throw new ApiError("请求体 JSON 格式错误", 400);
+      throw new ApiError("璇锋眰浣?JSON 鏍煎紡閿欒", 400);
     }
   }
   return {};
@@ -100,7 +130,7 @@ function normalizeDetectionResult(value) {
 }
 
 function parseFunctionInvokeErrorMessage(invokeError) {
-  const fallback = invokeError?.message || "检测失败，请稍后重试";
+  const fallback = invokeError?.message || "??????????";
   const context = invokeError?.context;
   if (!context) return fallback;
   return fallback;
@@ -116,7 +146,7 @@ async function resolveTemplateId(explicitTemplateId) {
     .order("id", { ascending: true })
     .limit(1);
   if (error) throw new ApiError(error.message, 500);
-  if (!data?.length) throw new ApiError("未找到可用模板", 400);
+  if (!data?.length) throw new ApiError("???????", 400);
   return data[0].id;
 }
 
@@ -131,7 +161,7 @@ async function getLatestSourceFile(paperId) {
     .limit(1)
     .maybeSingle();
   if (error) throw new ApiError(error.message, 500);
-  if (!data) throw new ApiError("未找到原始文档文件", 404);
+  if (!data) throw new ApiError("?????????", 404);
   return data;
 }
 
@@ -159,7 +189,7 @@ async function handleAuthLogin(req, res) {
   const payload = parseJsonBody(req);
   const username = String(payload?.username || "").trim();
   const password = String(payload?.password || "");
-  if (!username || !password) throw new ApiError("请输入用户名和密码", 400);
+  if (!username || !password) throw new ApiError("?????????", 400);
 
   const { data, error } = await supabase
     .from("sys_user")
@@ -168,9 +198,9 @@ async function handleAuthLogin(req, res) {
     .is("deleted_at", null)
     .maybeSingle();
   if (error) throw new ApiError(error.message, 500);
-  if (!data) throw new ApiError("账号不存在", 404);
-  if (Number(data.status) !== 1) throw new ApiError("账号已被禁用，请联系管理员", 403);
-  if (String(data.password_hash || "") !== password) throw new ApiError("密码错误", 401);
+  if (!data) throw new ApiError("?????", 404);
+  if (Number(data.status) !== 1) throw new ApiError("?????????????", 403);
+  if (String(data.password_hash || "") !== password) throw new ApiError("瀵嗙爜閿欒", 401);
 
   const loginAt = new Date().toISOString();
   const [userUpdateResult, logInsertResult] = await Promise.all([
@@ -183,7 +213,7 @@ async function handleAuthLogin(req, res) {
       target_type: "user",
       target_id: String(data.id),
       level: "INFO",
-      message: "用户登录成功",
+      message: "鐢ㄦ埛鐧诲綍鎴愬姛",
       detail_json: { username: data.username, source: "vercel-api" }
     })
   ]);
@@ -209,7 +239,7 @@ async function handleAuthRegister(req, res) {
   const payload = parseJsonBody(req);
   const username = String(payload?.username || "").trim();
   const password = String(payload?.password || "").trim();
-  if (!username || !password) throw new ApiError("请填写用户名和密码", 400);
+  if (!username || !password) throw new ApiError("?????????", 400);
 
   const insertPayload = {
     username,
@@ -223,9 +253,18 @@ async function handleAuthRegister(req, res) {
 
   const { error } = await supabase.from("sys_user").insert(insertPayload);
   if (error) {
-    if (/duplicate key|unique/i.test(error.message || "")) throw new ApiError("用户名/邮箱/手机号已存在", 409);
+    if (/duplicate key|unique/i.test(error.message || "")) throw new ApiError("鐢ㄦ埛鍚?閭/鎵嬫満鍙峰凡瀛樺湪", 409);
     throw new ApiError(error.message, 500);
   }
+  await writeSystemLog({
+    log_type: "CREATE",
+    module: "auth",
+    action: "register",
+    target_type: "user",
+    target_id: username,
+    message: "用户注册成功",
+    detail_json: { username }
+  });
   ok(res, {});
 }
 
@@ -235,8 +274,8 @@ async function handleAuthForgot(req, res) {
   const email = String(payload?.email || "").trim();
   const phone = String(payload?.phone || "").trim();
   const newPassword = String(payload?.new_password || "");
-  if (!username || !newPassword) throw new ApiError("请填写用户名和新密码", 400);
-  if (!email && !phone) throw new ApiError("邮箱或手机号至少填写一个", 400);
+  if (!username || !newPassword) throw new ApiError("璇峰～鍐欑敤鎴峰悕鍜屾柊瀵嗙爜", 400);
+  if (!email && !phone) throw new ApiError("????????????", 400);
 
   let query = supabase
     .from("sys_user")
@@ -249,13 +288,23 @@ async function handleAuthForgot(req, res) {
 
   const { data, error } = await query.maybeSingle();
   if (error) throw new ApiError(error.message, 500);
-  if (!data) throw new ApiError("用户名或联系方式不匹配", 404);
+  if (!data) throw new ApiError("???????????", 404);
 
   const { error: updateError } = await supabase
     .from("sys_user")
     .update({ password_hash: newPassword, updated_at: new Date().toISOString() })
     .eq("id", data.id);
   if (updateError) throw new ApiError(updateError.message, 500);
+  await writeSystemLog({
+    user_id: data.id,
+    log_type: "UPDATE",
+    module: "auth",
+    action: "forgot-password",
+    target_type: "user",
+    target_id: String(data.id),
+    message: "用户重置密码成功",
+    detail_json: { username }
+  });
   ok(res, {});
 }
 
@@ -267,9 +316,9 @@ async function handleUserUpload(req, res, auth) {
   const keywords = String(payload?.keywords || "").trim();
   const file = payload?.file;
 
-  if (!title) throw new ApiError("请先输入文档标题", 400);
-  if (!file?.base64 || !file?.name) throw new ApiError("请先选择 .docx 文件", 400);
-  if (!/\.docx$/i.test(file.name || "")) throw new ApiError("仅支持 .docx 文件", 400);
+  if (!title) throw new ApiError("璇峰厛杈撳叆鏂囨。鏍囬", 400);
+  if (!file?.base64 || !file?.name) throw new ApiError("璇峰厛閫夋嫨 .docx 鏂囦欢", 400);
+  if (!/\.docx$/i.test(file.name || "")) throw new ApiError("浠呮敮鎸?.docx 鏂囦欢", 400);
 
   const { data: paper, error: paperError } = await supabase
     .from("paper")
@@ -321,6 +370,16 @@ async function handleUserUpload(req, res, auth) {
     throw new ApiError(fileError.message, 500);
   }
 
+  await writeSystemLog({
+    user_id: userId,
+    log_type: "UPLOAD",
+    module: "user",
+    action: "upload",
+    target_type: "paper",
+    target_id: String(paper.id),
+    message: "用户上传论文成功",
+    detail_json: { paper_id: paper.id, source_file_id: fileRecord.id, filename: file.name }
+  });
   ok(res, { paper_id: paper.id, source_file_id: fileRecord.id });
 }
 
@@ -328,7 +387,7 @@ async function handleUserDetect(req, res, auth) {
   const userId = requireLogin(auth);
   const payload = parseJsonBody(req);
   const paperId = Number(payload?.paper_id);
-  if (!paperId) throw new ApiError("缺少文档ID", 400);
+  if (!paperId) throw new ApiError("缂哄皯鏂囨。ID", 400);
 
   const sourceFile = await getLatestSourceFile(paperId);
   const templateId = await resolveTemplateId(payload?.template_id);
@@ -365,14 +424,24 @@ async function handleUserDetect(req, res, auth) {
       .update({
         status: "FAILED",
         progress: 100,
-        error_message: functionErrorMessage || "调用检测函数失败",
+        error_message: functionErrorMessage || "????????",
         finished_at: new Date().toISOString()
       })
       .eq("id", task.id);
-    throw new ApiError(functionErrorMessage || "检测失败，请检查 Edge Function 部署与密钥配置", 500);
+    throw new ApiError(functionErrorMessage || "???????? Edge Function ???????", 500);
   }
 
   const metrics = detectData?.data || detectData || {};
+  await writeSystemLog({
+    user_id: userId,
+    log_type: "DETECT",
+    module: "user",
+    action: "detect",
+    target_type: "task",
+    target_id: String(task.id),
+    message: "用户发起检测成功",
+    detail_json: { task_id: task.id, paper_id: paperId, score: Number(metrics.total_score || 0) }
+  });
   ok(res, {
     task_id: task.id,
     task_no: taskNo,
@@ -385,7 +454,7 @@ async function handleUserAutoFormat(req, res, auth) {
   const userId = requireLogin(auth);
   const payload = parseJsonBody(req);
   const paperId = Number(payload?.paper_id);
-  if (!paperId) throw new ApiError("缺少文档ID", 400);
+  if (!paperId) throw new ApiError("缂哄皯鏂囨。ID", 400);
 
   const sourceFile = await getLatestSourceFile(paperId);
   const blob = await downloadStorageByRecord(sourceFile);
@@ -423,6 +492,16 @@ async function handleUserAutoFormat(req, res, auth) {
     throw new ApiError(fileError.message, 500);
   }
 
+  await writeSystemLog({
+    user_id: userId,
+    log_type: "CREATE",
+    module: "user",
+    action: "auto-format",
+    target_type: "file",
+    target_id: String(fileRecord.id),
+    message: "用户自动排版成功",
+    detail_json: { paper_id: paperId, output_file_id: fileRecord.id }
+  });
   ok(res, { output_file_id: fileRecord.id, download_url: `/api/files/${fileRecord.id}/download` });
 }
 
@@ -484,7 +563,7 @@ async function handleUserTemplates(req, res) {
 
 async function handleUserReport(req, res) {
   const raw = String(req.query.task_id || "").trim();
-  if (!raw) throw new ApiError("缺少任务ID", 400);
+  if (!raw) throw new ApiError("缂哄皯浠诲姟ID", 400);
 
   let query = supabase
     .from("detection_task")
@@ -496,7 +575,7 @@ async function handleUserReport(req, res) {
 
   const { data, error } = await query.maybeSingle();
   if (error) throw new ApiError(error.message, 500);
-  if (!data) throw new ApiError("任务不存在", 404);
+  if (!data) throw new ApiError("?????", 404);
 
   const dr = normalizeDetectionResult(data.detection_result);
   const details = dr.detail_json || {};
@@ -527,7 +606,7 @@ async function handleFileDownload(req, res, fileId) {
     .eq("is_deleted", 0)
     .maybeSingle();
   if (error) throw new ApiError(error.message, 500);
-  if (!data) throw new ApiError("文件不存在", 404);
+  if (!data) throw new ApiError("?????", 404);
 
   const blob = await downloadStorageByRecord(data);
   const buffer = Buffer.from(await blob.arrayBuffer());
@@ -539,7 +618,7 @@ async function handleFileDownload(req, res, fileId) {
 }
 
 async function handleFileDelete(req, res, auth, fileId) {
-  requireLogin(auth);
+  const userId = requireLogin(auth);
   const { data, error } = await supabase
     .from("file_record")
     .select("id, storage_path")
@@ -547,7 +626,7 @@ async function handleFileDelete(req, res, auth, fileId) {
     .eq("is_deleted", 0)
     .maybeSingle();
   if (error) throw new ApiError(error.message, 500);
-  if (!data) throw new ApiError("文件不存在", 404);
+  if (!data) throw new ApiError("?????", 404);
 
   const objectPath = parseStoragePath(data.storage_path);
   if (objectPath) {
@@ -556,6 +635,16 @@ async function handleFileDelete(req, res, auth, fileId) {
   }
 
   const result = await deleteWithFallback("file_record", fileId, { is_deleted: 1, storage_path: "" });
+  await writeSystemLog({
+    user_id: userId,
+    log_type: "DELETE",
+    module: "file",
+    action: "delete",
+    target_type: "file",
+    target_id: String(fileId),
+    message: "用户删除文件成功",
+    detail_json: result
+  });
   ok(res, result);
 }
 
@@ -575,25 +664,25 @@ async function handleReportExcel(req, res, taskId) {
   const detail = data?.detail_json || {};
   const issues = Array.isArray(detail) ? detail : Array.isArray(detail.issues) ? detail.issues : [];
   const headers = [
-    "任务ID",
-    "总分",
-    "是否通过",
-    "错误数",
-    "警告数",
-    "提示数",
-    "问题类型",
-    "问题描述",
-    "位置",
-    "级别",
-    "置信度",
-    "状态",
-    "修正建议"
+    "浠诲姟ID",
+    "鎬诲垎",
+    "鏄惁閫氳繃",
+    "???",
+    "???",
+    "???",
+    "闂绫诲瀷",
+    "闂鎻忚堪",
+    "浣嶇疆",
+    "绾у埆",
+    "???",
+    "??",
+    "淇寤鸿"
   ];
 
   const rows = (issues.length ? issues : [{}]).map((it, idx) => [
     idx === 0 ? taskId : "",
     idx === 0 ? data?.total_score ?? 0 : "",
-    idx === 0 ? (Number(data?.pass_flag || 0) === 1 ? "通过" : "未通过") : "",
+    idx === 0 ? (Number(data?.pass_flag || 0) === 1 ? "閫氳繃" : "鏈€氳繃") : "",
     idx === 0 ? data?.error_count ?? 0 : "",
     idx === 0 ? data?.warning_count ?? 0 : "",
     idx === 0 ? data?.info_count ?? 0 : "",
@@ -891,7 +980,8 @@ export default async function handler(req, res) {
     let path = pathname.startsWith("/api/") ? pathname.slice(4) : pathname === "/api" ? "/" : pathname;
     if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
     const method = String(req.method || "GET").toUpperCase();
-    const auth = getAuth(req);
+    let auth = getAuth(req);
+    auth = await hydrateAuth(auth);
 
     if (method === "GET" && path === "/health") {
       ok(res, {
@@ -938,8 +1028,10 @@ export default async function handler(req, res) {
 
     if (method === "GET" && path === "/admin/stats") return handleAdminStats(req, res, auth);
 
-    throw new ApiError("接口不存在", 404);
+    throw new ApiError("?????", 404);
   } catch (error) {
     fail(res, error);
   }
 }
+
+
