@@ -1,9 +1,15 @@
 ﻿import axios from "axios";
 
 const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || "/api",
   timeout: 60000
 });
+
+function normalizeApiPath(path) {
+  let p = String(path || "").trim();
+  if (!p.startsWith("/")) p = `/${p}`;
+  if (!p.startsWith("/api/")) p = `/api${p}`;
+  return p;
+}
 
 apiClient.interceptors.request.use((config) => {
   const token = localStorage.getItem("access_token") || "";
@@ -39,27 +45,27 @@ apiClient.interceptors.response.use(
 );
 
 export async function apiPost(path, payload = {}) {
-  const resp = await apiClient.post(path, payload);
+  const resp = await apiClient.post(normalizeApiPath(path), payload);
   return resp.data;
 }
 
 export async function apiGet(path, params) {
-  const resp = await apiClient.get(path, { params });
+  const resp = await apiClient.get(normalizeApiPath(path), { params });
   return resp.data;
 }
 
 export async function apiPut(path, payload = {}) {
-  const resp = await apiClient.put(path, payload);
+  const resp = await apiClient.put(normalizeApiPath(path), payload);
   return resp.data;
 }
 
 export async function apiDelete(path) {
-  const resp = await apiClient.delete(path);
+  const resp = await apiClient.delete(normalizeApiPath(path));
   return resp.data;
 }
 
 export async function apiGetBlob(path, params) {
-  return apiClient.get(path, {
+  return apiClient.get(normalizeApiPath(path), {
     params,
     responseType: "blob"
   });

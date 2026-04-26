@@ -888,7 +888,8 @@ export default async function handler(req, res) {
 
     const rawUrl = String(req.url || "");
     const pathname = rawUrl.split("?")[0] || "/";
-    const path = pathname.startsWith("/api/") ? pathname.slice(4) : pathname === "/api" ? "/" : pathname;
+    let path = pathname.startsWith("/api/") ? pathname.slice(4) : pathname === "/api" ? "/" : pathname;
+    if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
     const method = String(req.method || "GET").toUpperCase();
     const auth = getAuth(req);
 
