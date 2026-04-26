@@ -264,38 +264,29 @@ async function detectPaperBySupabase(paperId, payload) {
     .single();
   if (taskError) throw toApiError(taskError.message, 500);
 
-  const detail = { issues: [] };
-  const { error: resultError } = await supabase.from("detection_result").insert({
-    task_id: task.id,
-    total_score: 100,
-    pass_flag: 1,
-    error_count: 0,
-    warning_count: 0,
-    info_count: 0,
-    hit_rule_count: 0,
-    summary_json: { generated_by: "supabase_demo" },
-    detail_json: detail,
-    completed_at: new Date().toISOString()
+  const { data: detectData, error: detectError } = await supabase.functions.invoke("detect-format", {
+    body: { task_id: task.id }
   });
-  if (resultError) {
+  if (detectError) {
     await supabase
       .from("detection_task")
-      .update({ status: "FAILED", progress: 100, error_message: resultError.message, finished_at: new Date().toISOString() })
+      .update({
+        status: "FAILED",
+        progress: 100,
+        error_message: detectError.message || "调用检测函数失败",
+        finished_at: new Date().toISOString()
+      })
       .eq("id", task.id);
-    throw toApiError(resultError.message, 500);
+    throw toApiError(detectError.message || "检测失败，请检查 Edge Function 部署与密钥配置", 500);
   }
 
-  const { error: taskDoneError } = await supabase
-    .from("detection_task")
-    .update({ status: "SUCCESS", progress: 100, finished_at: new Date().toISOString() })
-    .eq("id", task.id);
-  if (taskDoneError) throw toApiError(taskDoneError.message, 500);
+  const metrics = detectData?.data || detectData || {};
 
   return buildApiResponse({
     task_id: task.id,
     task_no: taskNo,
-    score: 100,
-    pass_flag: 1
+    score: Number(metrics.total_score || 0),
+    pass_flag: Number(metrics.pass_flag || 0)
   });
 }
 
