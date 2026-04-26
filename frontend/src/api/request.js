@@ -35,7 +35,15 @@ apiClient.interceptors.request.use((config) => {
 });
 
 apiClient.interceptors.response.use(
-  (resp) => resp,
+  (resp) => {
+    const payload = resp?.data;
+    if (payload && typeof payload === "object" && "code" in payload && Number(payload.code) !== 0) {
+      const err = new Error(payload.message || "Request failed");
+      err.response = { ...resp, data: payload };
+      throw err;
+    }
+    return resp;
+  },
   (error) => {
     if (error?.response?.data?.message && !error.message) {
       error.message = error.response.data.message;

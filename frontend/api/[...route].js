@@ -984,8 +984,15 @@ export default async function handler(req, res) {
     auth = await hydrateAuth(auth);
 
     if (method === "GET" && path === "/health") {
+      let supabaseHost = "";
+      try {
+        supabaseHost = new URL(supabaseUrl).host;
+      } catch {
+        supabaseHost = "";
+      }
       ok(res, {
         status: "ok",
+        supabase_host: supabaseHost,
         supabase_url_set: Boolean(supabaseUrl),
         service_role_set: Boolean(supabaseServiceRoleKey)
       });

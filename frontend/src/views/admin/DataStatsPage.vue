@@ -61,6 +61,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from "vue";
+import { ElMessage } from "element-plus";
 import { getStatsApi } from "../../api/admin";
 
 const loading = ref(false);
@@ -114,6 +115,7 @@ async function loadStats() {
     const res = await getStatsApi();
     Object.assign(stats, res?.data || {});
   } catch (error) {
+    ElMessage.error(error?.message || "统计数据加载失败");
   } finally {
     loading.value = false;
   }

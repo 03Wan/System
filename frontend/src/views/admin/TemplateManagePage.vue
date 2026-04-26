@@ -211,8 +211,9 @@ async function loadTemplates() {
   try {
     const res = await getTemplatesApi();
     rows.value = res?.data?.list || [];
-  } catch {
+  } catch (error) {
     rows.value = [];
+    ElMessage.error(error?.message || "模板数据加载失败");
   } finally {
     loading.value = false;
   }
