@@ -141,6 +141,7 @@ async function loadUsers() {
     rows.value = res?.data?.list || [];
   } catch (error) {
     rows.value = [];
+    ElMessage.error(error?.response?.data?.message || error?.message || "用户数据加载失败");
   } finally {
     loading.value = false;
   }
@@ -184,7 +185,9 @@ async function save() {
     ElMessage.success("保存成功");
     dialogVisible.value = false;
     loadUsers();
-  } catch (error) {}
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.message || error?.message || "保存失败");
+  }
 }
 
 async function remove(row) {

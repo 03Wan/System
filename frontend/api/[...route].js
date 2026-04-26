@@ -507,16 +507,29 @@ async function handleUserAutoFormat(req, res, auth) {
 
 async function handleUserHistory(req, res, auth) {
   const userId = requireLogin(auth);
-  const { data, error } = await supabase
+  const { data: tasks, error } = await supabase
     .from("detection_task")
-    .select("id, task_no, paper_id, status, created_at, detection_result(total_score, pass_flag)")
+    .select("id, task_no, paper_id, status, created_at")
     .eq("submitter_id", userId)
     .order("id", { ascending: false })
     .limit(200);
   if (error) throw new ApiError(error.message, 500);
 
-  const list = (data || []).map((row) => {
-    const dr = normalizeDetectionResult(row.detection_result);
+  const taskIds = (tasks || []).map((x) => x.id);
+  const resultMap = {};
+  if (taskIds.length) {
+    const { data: results, error: resultError } = await supabase
+      .from("detection_result")
+      .select("task_id, total_score, pass_flag")
+      .in("task_id", taskIds);
+    if (resultError) throw new ApiError(resultError.message, 500);
+    (results || []).forEach((r) => {
+      resultMap[r.task_id] = r;
+    });
+  }
+
+  const list = (tasks || []).map((row) => {
+    const dr = normalizeDetectionResult(resultMap[row.id]);
     return {
       task_id: row.id,
       task_no: row.task_no,
@@ -532,19 +545,30 @@ async function handleUserHistory(req, res, auth) {
 
 async function handleUserStats(req, res, auth) {
   const userId = requireLogin(auth);
-  const { data, error } = await supabase
+  const { data: tasks, error } = await supabase
     .from("detection_task")
-    .select("id, detection_result(total_score, pass_flag)")
+    .select("id")
     .eq("submitter_id", userId);
   if (error) throw new ApiError(error.message, 500);
 
-  const rows = data || [];
-  const taskCount = rows.length;
-  const scores = rows
-    .map((r) => Number(normalizeDetectionResult(r.detection_result).total_score || 0))
+  const taskIds = (tasks || []).map((x) => x.id);
+  const taskCount = taskIds.length;
+
+  let resultRows = [];
+  if (taskIds.length) {
+    const { data: results, error: resultError } = await supabase
+      .from("detection_result")
+      .select("task_id, total_score, pass_flag")
+      .in("task_id", taskIds);
+    if (resultError) throw new ApiError(resultError.message, 500);
+    resultRows = results || [];
+  }
+
+  const scores = resultRows
+    .map((r) => Number(r.total_score || 0))
     .filter((n) => !Number.isNaN(n));
   const avgScore = scores.length ? Number((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1)) : 0;
-  const passCount = rows.filter((r) => Number(normalizeDetectionResult(r.detection_result).pass_flag || 0) === 1).length;
+  const passCount = resultRows.filter((r) => Number(r.pass_flag || 0) === 1).length;
   const passRate = taskCount ? Number(((passCount / taskCount) * 100).toFixed(1)) : 0;
 
   ok(res, { task_count: taskCount, avg_score: avgScore, pass_rate: passRate });
@@ -561,13 +585,15 @@ async function handleUserTemplates(req, res) {
   ok(res, { list: data || [] });
 }
 
-async function handleUserReport(req, res) {
+async function handleUserReport(req, res, auth) {
+  const userId = requireLogin(auth);
   const raw = String(req.query.task_id || "").trim();
   if (!raw) throw new ApiError("task_id is required", 400);
 
   let query = supabase
     .from("detection_task")
-    .select("id, task_no, paper_id, status, finished_at, detection_result(total_score, pass_flag, error_count, warning_count, info_count, detail_json, report_file_id, completed_at)")
+    .select("id, task_no, paper_id, status, finished_at, submitter_id")
+    .eq("submitter_id", userId)
     .limit(1);
 
   if (/^\d+$/.test(raw)) query = query.eq("id", Number(raw));
@@ -577,7 +603,13 @@ async function handleUserReport(req, res) {
   if (error) throw new ApiError(error.message, 500);
   if (!data) throw new ApiError("Task not found", 404);
 
-  const dr = normalizeDetectionResult(data.detection_result);
+  const { data: resultRow, error: resultError } = await supabase
+    .from("detection_result")
+    .select("total_score, pass_flag, error_count, warning_count, info_count, detail_json, report_file_id, completed_at")
+    .eq("task_id", data.id)
+    .maybeSingle();
+  if (resultError) throw new ApiError(resultError.message, 500);
+  const dr = normalizeDetectionResult(resultRow);
   const details = dr.detail_json || {};
   const issues = Array.isArray(details) ? details : Array.isArray(details.issues) ? details.issues : [];
 
@@ -929,10 +961,23 @@ async function handleAdminStats(req, res, auth) {
 
   const { data: recentTasks, error: e4 } = await supabase
     .from("detection_task")
-    .select("id, paper_id, submitter_id, created_at, detection_result(total_score)")
+    .select("id, paper_id, submitter_id, created_at")
     .order("id", { ascending: false })
     .limit(10);
   if (e4) throw new ApiError(e4.message, 500);
+
+  const recentTaskIds = (recentTasks || []).map((x) => x.id);
+  const recentResultMap = {};
+  if (recentTaskIds.length) {
+    const { data: recentResults, error: recentResultsError } = await supabase
+      .from("detection_result")
+      .select("task_id, total_score")
+      .in("task_id", recentTaskIds);
+    if (recentResultsError) throw new ApiError(recentResultsError.message, 500);
+    (recentResults || []).forEach((r) => {
+      recentResultMap[r.task_id] = r;
+    });
+  }
 
   const submitterIds = [...new Set((recentTasks || []).map((x) => x.submitter_id).filter(Boolean))];
   const userMap = {};
@@ -945,7 +990,7 @@ async function handleAdminStats(req, res, auth) {
   }
 
   const formattedRecent = (recentTasks || []).map((t) => {
-    const dr = normalizeDetectionResult(t.detection_result);
+    const dr = normalizeDetectionResult(recentResultMap[t.id]);
     return {
       task_id: t.id,
       paper_id: t.paper_id,
@@ -1009,7 +1054,7 @@ export default async function handler(req, res) {
     if (method === "GET" && path === "/user/history") return handleUserHistory(req, res, auth);
     if (method === "GET" && path === "/user/stats") return handleUserStats(req, res, auth);
     if (method === "GET" && path === "/user/templates") return handleUserTemplates(req, res);
-    if (method === "GET" && path === "/user/report") return handleUserReport(req, res);
+    if (method === "GET" && path === "/user/report") return handleUserReport(req, res, auth);
 
     const fileDownloadMatch = path.match(/^\/files\/(\d+)\/download$/);
     if (method === "GET" && fileDownloadMatch) return handleFileDownload(req, res, Number(fileDownloadMatch[1]));

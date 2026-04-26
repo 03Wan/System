@@ -518,6 +518,19 @@ async function loadResult() {
     const res = await getReportApi(taskId.value);
     result.value = res.data;
     issues.value = res.data?.details?.issues || [];
+    if (!result.value) {
+      ElMessage.warning("未查询到任务结果");
+    }
+  } catch (error) {
+    result.value = null;
+    issues.value = [];
+    const status = Number(error?.response?.status || 0);
+    const msg = error?.response?.data?.message || error?.message || "查询失败";
+    if (status === 404) {
+      ElMessage.error("未找到该任务结果，请确认任务ID属于当前登录用户");
+    } else {
+      ElMessage.error(msg);
+    }
   } finally {
     loading.value = false;
   }

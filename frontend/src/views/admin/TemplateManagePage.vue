@@ -271,16 +271,20 @@ function normalizeRuleUI(rule) {
 }
 
 async function openRules(row) {
-  currentTemplateId.value = row.id;
-  currentTemplateName.value = row.template_name;
-  const res = await getTemplateRulesApi(row.id);
-  const list = res?.data?.list || [];
-  ruleRows.value = list.map((r) => ({
-    ...r,
-    enabledBool: r.enabled === 1,
-    ui: normalizeRuleUI(r)
-  }));
-  rulesDialogVisible.value = true;
+  try {
+    currentTemplateId.value = row.id;
+    currentTemplateName.value = row.template_name;
+    const res = await getTemplateRulesApi(row.id);
+    const list = res?.data?.list || [];
+    ruleRows.value = list.map((r) => ({
+      ...r,
+      enabledBool: r.enabled === 1,
+      ui: normalizeRuleUI(r)
+    }));
+    rulesDialogVisible.value = true;
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.message || error?.message || "规则加载失败");
+  }
 }
 
 function getRuleEntries(row) {
@@ -667,25 +671,6 @@ async function saveRules() {
 .rule-controls :deep(.el-select),
 .rule-controls :deep(.el-input) {
   max-width: 180px;
-}
-
-:deep(.el-dialog) {
-  background: var(--surface, #ffffff);
-  color: var(--text, #1f2937);
-}
-
-:deep(.el-dialog__title),
-:deep(.el-table th),
-:deep(.el-form-item__label) {
-  color: var(--text, #1f2937);
-}
-
-:deep(.el-table),
-:deep(.el-table tr),
-:deep(.el-table th.el-table__cell),
-:deep(.el-table td.el-table__cell) {
-  background: var(--surface, #ffffff);
-  color: var(--text, #1f2937);
 }
 
 :deep(.el-alert--info) {
