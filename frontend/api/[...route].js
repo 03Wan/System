@@ -902,9 +902,9 @@ export default async function handler(req, res) {
       return;
     }
 
-    if (method === "POST" && path === "/auth/login") return handleAuthLogin(req, res);
-    if (method === "POST" && path === "/auth/register") return handleAuthRegister(req, res);
-    if (method === "POST" && path === "/auth/forgot-password") return handleAuthForgot(req, res);
+    if (method === "POST" && (path === "/auth/login" || path === "/session/login")) return handleAuthLogin(req, res);
+    if (method === "POST" && (path === "/auth/register" || path === "/session/register")) return handleAuthRegister(req, res);
+    if (method === "POST" && (path === "/auth/forgot-password" || path === "/session/forgot-password")) return handleAuthForgot(req, res);
 
     if (method === "POST" && path === "/user/upload") return handleUserUpload(req, res, auth);
     if (method === "POST" && path === "/user/detect") return handleUserDetect(req, res, auth);

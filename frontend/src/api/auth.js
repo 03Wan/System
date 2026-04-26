@@ -1,13 +1,13 @@
 ﻿import { apiPost } from "./request";
 
 export function loginApi(payload) {
-  return apiPost("/auth/login", payload);
+  return apiPost("/session/login", payload);
 }
 
 export function registerApi(payload) {
-  return apiPost("/auth/register", payload);
+  return apiPost("/session/register", payload);
 }
 
 export function forgotPasswordApi(payload) {
-  return apiPost("/auth/forgot-password", payload);
+  return apiPost("/session/forgot-password", payload);
 }
