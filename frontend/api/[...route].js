@@ -1,6 +1,14 @@
 import { createClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: "20mb"
+    }
+  }
+};
+
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
 const STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || process.env.VITE_SUPABASE_STORAGE_BUCKET || "files";
@@ -886,6 +894,15 @@ export default async function handler(req, res) {
     const path = `/${segments.join("/")}`;
     const method = String(req.method || "GET").toUpperCase();
     const auth = getAuth(req);
+
+    if (method === "GET" && path === "/health") {
+      ok(res, {
+        status: "ok",
+        supabase_url_set: Boolean(supabaseUrl),
+        service_role_set: Boolean(supabaseServiceRoleKey)
+      });
+      return;
+    }
 
     if (method === "POST" && path === "/auth/login") return handleAuthLogin(req, res);
     if (method === "POST" && path === "/auth/register") return handleAuthRegister(req, res);
