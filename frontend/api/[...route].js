@@ -78,18 +78,18 @@ async function hydrateAuth(auth) {
 }
 
 function requireLogin(auth) {
-  if (!auth?.user?.id) throw new ApiError("璇峰厛鐧诲綍", 401);
+  if (!auth?.user?.id) throw new ApiError("Please login first", 401);
   return auth.user.id;
 }
 
 function requireAdmin(auth) {
   requireLogin(auth);
-  if (String(auth.user?.role || "").toUpperCase() !== "ADMIN") throw new ApiError("鏃犳潈闄愭墽琛岃鎿嶄綔", 403);
+  if (String(auth.user?.role || "").toUpperCase() !== "ADMIN") throw new ApiError("Permission denied", 403);
 }
 
 function ensureSupabaseEnv() {
   if (!supabaseUrl || !supabaseServiceRoleKey) {
-    throw new ApiError("鏈嶅姟绔?Supabase 鐜鍙橀噺缂哄け锛岃閰嶇疆 SUPABASE_URL 涓?SUPABASE_SERVICE_ROLE_KEY", 500);
+    throw new ApiError("Missing Supabase env vars: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY", 500);
   }
 }
 
@@ -99,7 +99,7 @@ function parseJsonBody(req) {
     try {
       return JSON.parse(req.body);
     } catch {
-      throw new ApiError("璇锋眰浣?JSON 鏍煎紡閿欒", 400);
+      throw new ApiError("Invalid JSON body", 400);
     }
   }
   return {};
@@ -146,7 +146,7 @@ async function resolveTemplateId(explicitTemplateId) {
     .order("id", { ascending: true })
     .limit(1);
   if (error) throw new ApiError(error.message, 500);
-  if (!data?.length) throw new ApiError("???????", 400);
+  if (!data?.length) throw new ApiError("No available template found", 400);
   return data[0].id;
 }
 
@@ -161,7 +161,7 @@ async function getLatestSourceFile(paperId) {
     .limit(1)
     .maybeSingle();
   if (error) throw new ApiError(error.message, 500);
-  if (!data) throw new ApiError("?????????", 404);
+  if (!data) throw new ApiError("Source document not found", 404);
   return data;
 }
 
@@ -189,7 +189,7 @@ async function handleAuthLogin(req, res) {
   const payload = parseJsonBody(req);
   const username = String(payload?.username || "").trim();
   const password = String(payload?.password || "");
-  if (!username || !password) throw new ApiError("?????????", 400);
+  if (!username || !password) throw new ApiError("Username and password are required", 400);
 
   const { data, error } = await supabase
     .from("sys_user")
@@ -198,9 +198,9 @@ async function handleAuthLogin(req, res) {
     .is("deleted_at", null)
     .maybeSingle();
   if (error) throw new ApiError(error.message, 500);
-  if (!data) throw new ApiError("?????", 404);
-  if (Number(data.status) !== 1) throw new ApiError("?????????????", 403);
-  if (String(data.password_hash || "") !== password) throw new ApiError("瀵嗙爜閿欒", 401);
+  if (!data) throw new ApiError("Account does not exist", 404);
+  if (Number(data.status) !== 1) throw new ApiError("Account is disabled", 403);
+  if (String(data.password_hash || "") !== password) throw new ApiError("Wrong password", 401);
 
   const loginAt = new Date().toISOString();
   const [userUpdateResult, logInsertResult] = await Promise.all([
@@ -213,7 +213,7 @@ async function handleAuthLogin(req, res) {
       target_type: "user",
       target_id: String(data.id),
       level: "INFO",
-      message: "鐢ㄦ埛鐧诲綍鎴愬姛",
+      message: "User login success",
       detail_json: { username: data.username, source: "vercel-api" }
     })
   ]);
@@ -239,7 +239,7 @@ async function handleAuthRegister(req, res) {
   const payload = parseJsonBody(req);
   const username = String(payload?.username || "").trim();
   const password = String(payload?.password || "").trim();
-  if (!username || !password) throw new ApiError("?????????", 400);
+  if (!username || !password) throw new ApiError("Username and password are required", 400);
 
   const insertPayload = {
     username,
@@ -253,7 +253,7 @@ async function handleAuthRegister(req, res) {
 
   const { error } = await supabase.from("sys_user").insert(insertPayload);
   if (error) {
-    if (/duplicate key|unique/i.test(error.message || "")) throw new ApiError("鐢ㄦ埛鍚?閭/鎵嬫満鍙峰凡瀛樺湪", 409);
+    if (/duplicate key|unique/i.test(error.message || "")) throw new ApiError("Username/email/phone already exists", 409);
     throw new ApiError(error.message, 500);
   }
   await writeSystemLog({
@@ -274,8 +274,8 @@ async function handleAuthForgot(req, res) {
   const email = String(payload?.email || "").trim();
   const phone = String(payload?.phone || "").trim();
   const newPassword = String(payload?.new_password || "");
-  if (!username || !newPassword) throw new ApiError("璇峰～鍐欑敤鎴峰悕鍜屾柊瀵嗙爜", 400);
-  if (!email && !phone) throw new ApiError("????????????", 400);
+  if (!username || !newPassword) throw new ApiError("Username and new password are required", 400);
+  if (!email && !phone) throw new ApiError("Email or phone is required", 400);
 
   let query = supabase
     .from("sys_user")
@@ -288,7 +288,7 @@ async function handleAuthForgot(req, res) {
 
   const { data, error } = await query.maybeSingle();
   if (error) throw new ApiError(error.message, 500);
-  if (!data) throw new ApiError("???????????", 404);
+  if (!data) throw new ApiError("Username or contact does not match", 404);
 
   const { error: updateError } = await supabase
     .from("sys_user")
@@ -316,9 +316,9 @@ async function handleUserUpload(req, res, auth) {
   const keywords = String(payload?.keywords || "").trim();
   const file = payload?.file;
 
-  if (!title) throw new ApiError("璇峰厛杈撳叆鏂囨。鏍囬", 400);
-  if (!file?.base64 || !file?.name) throw new ApiError("璇峰厛閫夋嫨 .docx 鏂囦欢", 400);
-  if (!/\.docx$/i.test(file.name || "")) throw new ApiError("浠呮敮鎸?.docx 鏂囦欢", 400);
+  if (!title) throw new ApiError("Document title is required", 400);
+  if (!file?.base64 || !file?.name) throw new ApiError("Please choose a .docx file", 400);
+  if (!/\.docx$/i.test(file.name || "")) throw new ApiError("Only .docx is supported", 400);
 
   const { data: paper, error: paperError } = await supabase
     .from("paper")
@@ -387,7 +387,7 @@ async function handleUserDetect(req, res, auth) {
   const userId = requireLogin(auth);
   const payload = parseJsonBody(req);
   const paperId = Number(payload?.paper_id);
-  if (!paperId) throw new ApiError("缂哄皯鏂囨。ID", 400);
+  if (!paperId) throw new ApiError("paper_id is required", 400);
 
   const sourceFile = await getLatestSourceFile(paperId);
   const templateId = await resolveTemplateId(payload?.template_id);
@@ -424,11 +424,11 @@ async function handleUserDetect(req, res, auth) {
       .update({
         status: "FAILED",
         progress: 100,
-        error_message: functionErrorMessage || "????????",
+        error_message: functionErrorMessage || "Detect function invocation failed",
         finished_at: new Date().toISOString()
       })
       .eq("id", task.id);
-    throw new ApiError(functionErrorMessage || "???????? Edge Function ???????", 500);
+    throw new ApiError(functionErrorMessage || "Detection failed, please check Edge Function deployment and keys", 500);
   }
 
   const metrics = detectData?.data || detectData || {};
@@ -454,7 +454,7 @@ async function handleUserAutoFormat(req, res, auth) {
   const userId = requireLogin(auth);
   const payload = parseJsonBody(req);
   const paperId = Number(payload?.paper_id);
-  if (!paperId) throw new ApiError("缂哄皯鏂囨。ID", 400);
+  if (!paperId) throw new ApiError("paper_id is required", 400);
 
   const sourceFile = await getLatestSourceFile(paperId);
   const blob = await downloadStorageByRecord(sourceFile);
@@ -563,7 +563,7 @@ async function handleUserTemplates(req, res) {
 
 async function handleUserReport(req, res) {
   const raw = String(req.query.task_id || "").trim();
-  if (!raw) throw new ApiError("缂哄皯浠诲姟ID", 400);
+  if (!raw) throw new ApiError("task_id is required", 400);
 
   let query = supabase
     .from("detection_task")
@@ -575,7 +575,7 @@ async function handleUserReport(req, res) {
 
   const { data, error } = await query.maybeSingle();
   if (error) throw new ApiError(error.message, 500);
-  if (!data) throw new ApiError("?????", 404);
+  if (!data) throw new ApiError("Task not found", 404);
 
   const dr = normalizeDetectionResult(data.detection_result);
   const details = dr.detail_json || {};
@@ -606,7 +606,7 @@ async function handleFileDownload(req, res, fileId) {
     .eq("is_deleted", 0)
     .maybeSingle();
   if (error) throw new ApiError(error.message, 500);
-  if (!data) throw new ApiError("?????", 404);
+  if (!data) throw new ApiError("File not found", 404);
 
   const blob = await downloadStorageByRecord(data);
   const buffer = Buffer.from(await blob.arrayBuffer());
@@ -626,7 +626,7 @@ async function handleFileDelete(req, res, auth, fileId) {
     .eq("is_deleted", 0)
     .maybeSingle();
   if (error) throw new ApiError(error.message, 500);
-  if (!data) throw new ApiError("?????", 404);
+  if (!data) throw new ApiError("File not found", 404);
 
   const objectPath = parseStoragePath(data.storage_path);
   if (objectPath) {
@@ -1028,7 +1028,7 @@ export default async function handler(req, res) {
 
     if (method === "GET" && path === "/admin/stats") return handleAdminStats(req, res, auth);
 
-    throw new ApiError("?????", 404);
+    throw new ApiError("API route not found", 404);
   } catch (error) {
     fail(res, error);
   }
